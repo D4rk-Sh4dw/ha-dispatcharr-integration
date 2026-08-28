@@ -16,6 +16,7 @@ This is a fork of [lyfesaver74/ha-dispatcharr](https://github.com/lyfesaver74/ha
 * **M3U Account Sensors:** One sensor per configured M3U/Xtream account, showing status (`idle`/`fetching`/`error`/`success`/...), last message, and expiration dates — handy for catching a lapsed IPTV subscription before it surprises you. Refreshes every 5 minutes (fixed, not configurable) — see the note under [Realtime updates](#realtime-updates).
 * **Unread Notifications Sensor:** Surfaces Dispatcharr's own system notifications (failed refreshes, update announcements, recommendations) as a count with the active notifications listed as attributes. Also refreshes every 5 minutes, plus immediately on a realtime notification event if enabled.
 * **Realtime Websocket Updates (Optional):** Keeps a websocket connection to Dispatcharr open so relevant changes (recording started/ended, notifications, and — for admin accounts — live stream stats) push an update immediately instead of waiting for the next poll.
+* **Client Visibility:** See who is watching what — per-stream client IP addresses and user agents, plus an `Active Clients` sensor summarising all viewers across every stream.
 * **Configurable Update Interval:** Poll interval for active streams is adjustable from 2–300 seconds (default 10s).
 * **Brand Icon:** Ships Dispatcharr's own logo (`custom_components/dispatcharr_sensor/brand/`) so the integration shows a real icon instead of the generic puzzle piece. Requires **Home Assistant 2026.3 or later** — older versions fall back to the generic icon (harmless, no error).
 
@@ -62,7 +63,7 @@ All of the below can be changed at any time without re-installing the integratio
 1.  Go to **Settings** > **Devices & Services**.
 2.  Find the Dispatcharr integration and click **"Configure"**.
 3.  Adjust as needed:
-    * **Enable EPG Data** — turn the now-playing program lookup on or off. Useful for performance tuning on slower servers.
+    * **Enable EPG Data** — turn the now-playing program lookup on or off. Useful for performance tuning on slower servers. Channel names, numbers and logos are unaffected; only the recurring program lookups are skipped.
     * **Enable realtime websocket updates** — see the [Realtime updates](#realtime-updates) section below.
     * **Update interval (seconds)** — how often Home Assistant polls Dispatcharr for active streams. Defaults to `10` seconds. Can be set anywhere from `2` to `300` seconds. Realtime websocket events (if enabled) arrive immediately regardless of this setting.
 4.  Click **"Submit"**. The integration will automatically reload with the new settings.
@@ -84,6 +85,7 @@ Because Dispatcharr's websocket only accepts JWT access tokens (30-minute lifeti
 ## Provided Entities
 
 * **`sensor.dispatcharr_total_active_streams`**: Total number of active streams.
+* **`sensor.dispatcharr_active_clients`**: Total number of viewers across all active streams. Attributes: `clients` (each with `ip_address`, `user_agent`, `connected_at`, `output_format` and the `channel_name` they're watching), `clients_per_channel`, and `clients_listed`.
 * **`sensor.dispatcharr_unread_notifications`**: Count of active (non-dismissed) Dispatcharr system notifications, with the notifications themselves (title, message, priority, type) as an attribute list.
 * **`sensor.dispatcharr_<account_name>_status`** (Dynamic, one per M3U/Xtream account): State is the account's status (`idle`, `fetching`, `parsing`, `error`, `success`, `pending_setup`, `disabled`). Attributes include `last_message`, `max_streams`, `earliest_expiration`, `all_expirations`, and `exp_date`.
 * **`media_player.dispatcharr_<channel_name>`** (Dynamic): A new media player entity for each active stream, removed automatically when the stream stops.
@@ -96,18 +98,29 @@ Because Dispatcharr's websocket only accepts JWT access tokens (30-minute lifeti
 |---|---|---|
 | `media_title` | The title of the currently airing program. | `Doctor Who` |
 | `media_series_title` | The friendly name of the channel. | `US: BBC AMERICA HD` |
-| `media_content_id` | The stream's internal channel number/ID. | `98209` |
+| `media_content_id` | The channel's EPG id (`tvg_id`). | `bbcamerica.us` |
 | `app_name` | The source of the stream. | `Dispatcharr` |
-| `entity_picture` | A direct URL to the channel's logo image. | `http://.../logos/262/cache/` |
-| `clients` | The number of clients watching this stream. | `1` |
-| `resolution` | The current video resolution. | `1280x720` |
-| `fps` | The current frames per second. | `59.94` |
+| `entity_picture` | A direct URL to the channel's logo image. | `https://.../logos/262/cache/` |
+| `channel_number` | The channel's number in Dispatcharr. | `98.2` |
+| `channel_name` | The channel's name. | `US: BBC AMERICA HD` |
+| `tvg_id` | The channel's EPG id. | `bbcamerica.us` |
+| `clients` | Number of clients watching this stream. | `2` |
+| `client_ips` | IP addresses of those clients. | `["192.168.0.50", "192.168.0.51"]` |
+| `client_details` | Per-client `ip_address`, `user_agent`, `connected_at`, `output_format`, `client_id`. | see below |
+| `resolution` | The current video resolution. | `1920x1080` |
+| `fps` | Frames per second of the source. | `50.0` |
 | `video_codec` | The video codec being used. | `h264` |
-| `audio_codec` | The audio codec being used. | `aac` |
-| `avg_bitrate` | The average bitrate of the stream. | `4.11 Mbps` |
+| `audio_codec` | The audio codec being used. | `ac3` |
+| `audio_channels` | Number of audio channels. | `6` |
+| `avg_bitrate` | The average bitrate of the stream. | `5.18 Mbps` |
+| `uptime` | Seconds the stream has been running. | `132.5` |
+| `stream_profile` | The stream profile in use. | `default` |
+| `program_title` | Title of the current program. | `Doctor Who` |
 | `program_description` | A description of the current program. | `The Doctor travels through time...` |
-| `program_start` | The start time of the current program. | `2025-10-02T14:00:00-05:00` |
-| `program_stop` | The end time of the current program. | `2025-10-02T15:00:00-05:00` |
+| `program_start` | The start time of the current program. | `2026-08-28T14:00:00+02:00` |
+| `program_stop` | The end time of the current program. | `2026-08-28T15:00:00+02:00` |
+
+**Client list caveat:** Dispatcharr's status API returns at most the first 10 clients per channel. `clients` (the count) stays accurate above that, but `client_ips` and `client_details` are capped at 10 entries.
 
 Note: season/episode numbers are not exposed (`media_season`/`media_episode`), since Dispatcharr's official `current-programs` endpoint used for EPG matching doesn't provide that field — this is a deliberate trade-off for far more reliable channel-to-program matching than the upstream project's name-guessing approach.
 

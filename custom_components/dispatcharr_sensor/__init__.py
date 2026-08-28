@@ -1,7 +1,7 @@
 """The Dispatcharr integration."""
 import asyncio
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
@@ -49,8 +49,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     aux_coordinator = DispatcharrAuxDataCoordinator(hass, entry, coordinator)
     coordinator.aux_coordinator = aux_coordinator
 
-    if coordinator.epg_enabled:
-        await coordinator.async_populate_channel_map()
+    # Always built: it supplies channel names, numbers and logos. The EPG option
+    # only governs the recurring programme lookups, which is where the cost is.
+    await coordinator.async_populate_channel_map()
     await coordinator.async_config_entry_first_refresh()
     await aux_coordinator.async_config_entry_first_refresh()
 
@@ -245,7 +246,7 @@ class DispatcharrDataUpdateCoordinator(DataUpdateCoordinator):
         return results
 
     async def async_populate_channel_map(self):
-        """Fetch channels + logos once to build a reliable channel/EPG map.
+        """Fetch channels, logos and EPG records once to build the channel map.
 
         Keyed by both the channel's numeric id and its uuid, since it isn't
         documented which one `/proxy/ts/status` reports as `channel_id`.
@@ -258,6 +259,14 @@ class DispatcharrDataUpdateCoordinator(DataUpdateCoordinator):
             logos = await self._api_request_paginated(
                 f"{self.base_url}/api/channels/logos/"
             )
+            # A channel's own tvg_id is often blank because the EPG assignment
+            # lives on a separate record; that record holds the tvg_id the
+            # programme listings are keyed by. Only needed for programme lookups.
+            epg_records = (
+                await self._api_request_paginated(f"{self.base_url}/api/epg/epgdata/")
+                if self.epg_enabled
+                else []
+            )
         except UpdateFailed as err:
             raise ConfigEntryNotReady(f"Could not fetch channel list: {err}") from err
 
@@ -267,12 +276,25 @@ class DispatcharrDataUpdateCoordinator(DataUpdateCoordinator):
             if logo.get("id") is not None
         }
 
+        tvg_id_by_epg_record = {
+            str(record["id"]): record.get("tvg_id")
+            for record in epg_records or []
+            if record.get("id") is not None
+        }
+
         channel_map: dict = {}
         for channel in channels or []:
-            tvg_id = channel.get("effective_tvg_id") or channel.get("tvg_id")
+            epg_record_id = channel.get("effective_epg_data_id") or channel.get("epg_data_id")
+            tvg_id = (
+                tvg_id_by_epg_record.get(str(epg_record_id))
+                or channel.get("effective_tvg_id")
+                or channel.get("tvg_id")
+            )
             details = {
                 "uuid": channel.get("uuid"),
                 "tvg_id": tvg_id,
+                "channel_number": channel.get("effective_channel_number")
+                or channel.get("channel_number"),
                 "name": channel.get("effective_name") or channel.get("name"),
                 "logo_url": self.logo_map.get(
                     str(channel.get("effective_logo_id") or channel.get("logo_id"))
@@ -284,7 +306,44 @@ class DispatcharrDataUpdateCoordinator(DataUpdateCoordinator):
                 channel_map[str(channel["uuid"])] = details
 
         self.channel_map = channel_map
-        _LOGGER.info("Successfully built channel map with %d channels.", len(channels or []))
+        _LOGGER.info(
+            "Built channel map with %d channels (%d with an EPG id).",
+            len(channels or []),
+            sum(1 for c in channel_map.values() if c.get("tvg_id")),
+        )
+
+    @staticmethod
+    def _normalize_clients(clients) -> list:
+        """Turn the raw client entries into a stable, template-friendly shape.
+
+        Note that /proxy/ts/status caps this list at the first 10 clients per
+        channel; `client_count` remains the authoritative total.
+        """
+        normalized = []
+        for client in clients or []:
+            if not isinstance(client, dict):
+                continue
+
+            connected_at = client.get("connected_at")
+            connected_iso = None
+            if connected_at is not None:
+                try:
+                    connected_iso = datetime.fromtimestamp(
+                        float(connected_at), tz=timezone.utc
+                    ).isoformat()
+                except (TypeError, ValueError, OSError, OverflowError):
+                    connected_iso = None
+
+            normalized.append(
+                {
+                    "ip_address": client.get("ip_address"),
+                    "user_agent": client.get("user_agent"),
+                    "connected_at": connected_iso,
+                    "output_format": client.get("output_format"),
+                    "client_id": client.get("client_id"),
+                }
+            )
+        return normalized
 
     async def async_stop_channel(self, channel_id: str) -> None:
         """Stop a channel's stream for all viewers via the official API."""
@@ -309,15 +368,26 @@ class DispatcharrDataUpdateCoordinator(DataUpdateCoordinator):
                 continue
 
             enriched_stream = stream.copy()
-            details = self.channel_map.get(str(stream_uuid)) if self.epg_enabled else None
+            details = self.channel_map.get(str(stream_uuid)) or {}
 
-            if details:
-                enriched_stream["xmltv_id"] = details["tvg_id"]
-                enriched_stream["channel_name"] = details["name"]
-                enriched_stream["logo_url"] = details.get("logo_url")
+            # The status payload already carries the channel name and logo id,
+            # so these stay correct even when the channel map has no entry.
+            enriched_stream["channel_name"] = (
+                stream.get("channel_name") or details.get("name")
+            )
+            enriched_stream["channel_number"] = details.get("channel_number")
+            enriched_stream["tvg_id"] = details.get("tvg_id")
+
+            logo_id = stream.get("logo_id") or details.get("logo_id")
+            enriched_stream["logo_url"] = (
+                self.logo_map.get(str(logo_id)) if logo_id else None
+            ) or details.get("logo_url")
+
+            enriched_stream["clients"] = self._normalize_clients(stream.get("clients"))
+
+            if details.get("uuid") and details.get("tvg_id"):
                 details_by_stream[stream_uuid] = details
-                if details.get("uuid"):
-                    channel_uuids_needed.append(details["uuid"])
+                channel_uuids_needed.append(details["uuid"])
 
             enriched_streams[stream_uuid] = enriched_stream
 

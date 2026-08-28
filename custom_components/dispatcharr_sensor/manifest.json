@@ -1,7 +1,7 @@
 {
   "domain": "dispatcharr_sensor",
   "name": "Dispatcharr",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "documentation": "https://github.com/D4rk-Sh4dw/ha-dispatcharr-integration",
   "requirements": [],
   "dependencies": [],

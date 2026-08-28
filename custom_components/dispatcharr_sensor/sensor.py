@@ -30,6 +30,7 @@ async def async_setup_entry(
     async_add_entities(
         [
             DispatcharrTotalStreamSensor(coordinator),
+            DispatcharrActiveClientsSensor(coordinator),
             DispatcharrUnreadNotificationsSensor(aux_coordinator),
         ]
     )
@@ -51,6 +52,46 @@ class DispatcharrTotalStreamSensor(CoordinatorEntity, SensorEntity):
     @property
     def native_value(self) -> int:
         return len(self.coordinator.data or {})
+
+
+class DispatcharrActiveClientsSensor(CoordinatorEntity, SensorEntity):
+    """Total viewers across all active streams, with who is watching what."""
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator: DispatcharrDataUpdateCoordinator):
+        super().__init__(coordinator)
+        self._attr_name = "Active Clients"
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_active_clients"
+        self._attr_icon = "mdi:account-multiple"
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, coordinator.config_entry.entry_id)}, name="Dispatcharr")
+
+    @property
+    def native_value(self) -> int:
+        """Total client count, taken from each channel's authoritative counter."""
+        return sum(
+            stream.get("client_count") or 0
+            for stream in (self.coordinator.data or {}).values()
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        clients = []
+        per_channel = {}
+
+        for stream in (self.coordinator.data or {}).values():
+            channel = stream.get("channel_name") or stream.get("stream_name")
+            per_channel[channel] = stream.get("client_count") or 0
+            for client in stream.get("clients") or []:
+                clients.append({**client, "channel_name": channel})
+
+        return {
+            "clients": clients,
+            "clients_per_channel": per_channel,
+            # The status API only lists the first 10 clients per channel, so the
+            # detail list can be shorter than the counts above.
+            "clients_listed": len(clients),
+        }
 
 
 class DispatcharrUnreadNotificationsSensor(CoordinatorEntity, SensorEntity):

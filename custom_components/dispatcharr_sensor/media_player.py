@@ -109,7 +109,7 @@ class DispatcharrStreamMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
 
     @property
     def media_content_id(self) -> str | None:
-        return self._stream_data.get("xmltv_id")
+        return self._stream_data.get("tvg_id")
 
     @property
     def media_series_title(self) -> str | None:
@@ -125,19 +125,26 @@ class DispatcharrStreamMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
     def extra_state_attributes(self) -> dict:
         stream_data = self._stream_data
         program_data = self._program_data
+        clients = stream_data.get("clients") or []
         return {
-            "channel_number": stream_data.get("xmltv_id"),
+            "channel_number": stream_data.get("channel_number"),
             "channel_name": stream_data.get("channel_name"),
+            "tvg_id": stream_data.get("tvg_id"),
             "program_title": program_data.get("title"),
             "program_description": program_data.get("description"),
             "program_start": program_data.get("start_time"),
             "program_stop": program_data.get("end_time"),
             "clients": stream_data.get("client_count"),
+            "client_ips": [c["ip_address"] for c in clients if c.get("ip_address")],
+            "client_details": clients,
             "resolution": stream_data.get("resolution"),
-            "fps": stream_data.get("fps"),
+            "fps": stream_data.get("source_fps"),
             "video_codec": stream_data.get("video_codec"),
             "audio_codec": stream_data.get("audio_codec"),
+            "audio_channels": stream_data.get("audio_channels"),
             "avg_bitrate": stream_data.get("avg_bitrate"),
+            "uptime": stream_data.get("uptime"),
+            "stream_profile": stream_data.get("stream_profile"),
         }
 
     async def async_media_stop(self) -> None:
