@@ -11,6 +11,7 @@ from homeassistant.components.media_player import (
     MediaPlayerState,
     MediaType,
 )
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.exceptions import PlatformNotReady
@@ -31,7 +32,30 @@ async def async_setup_entry(
     except KeyError:
         raise PlatformNotReady(f"Coordinator not found for entry {config_entry.entry_id}")
 
+    _cleanup_stale_entities(hass, coordinator)
     DispatcharrStreamManager(coordinator, async_add_entities)
+
+
+@callback
+def _cleanup_stale_entities(
+    hass: HomeAssistant, coordinator: DispatcharrDataUpdateCoordinator
+) -> None:
+    """Drop media players left behind by streams that are no longer running.
+
+    The manager only tracks streams it saw during this session, so leftovers
+    from a previous run (or from before entity removal was implemented) would
+    otherwise sit in the UI as "unavailable" indefinitely.
+    """
+    registry = er.async_get(hass)
+    entry_id = coordinator.config_entry.entry_id
+    active_unique_ids = {f"{entry_id}_{stream_id}" for stream_id in (coordinator.data or {})}
+
+    for entity in er.async_entries_for_config_entry(registry, entry_id):
+        if entity.domain != "media_player":
+            continue
+        if entity.unique_id not in active_unique_ids:
+            _LOGGER.debug("Removing stale media player %s", entity.entity_id)
+            registry.async_remove(entity.entity_id)
 
 
 class DispatcharrStreamManager:
@@ -45,14 +69,39 @@ class DispatcharrStreamManager:
 
     @callback
     def _update_entities(self) -> None:
-        """Add entities for streams we haven't seen yet."""
+        """Add entities for new streams and drop the ones that have stopped."""
+        # A failed refresh leaves coordinator.data untouched, so entities are
+        # never torn down just because Dispatcharr was briefly unreachable.
         current_stream_ids = set(self._coordinator.data or {})
 
         new_stream_ids = current_stream_ids - self._known_stream_ids
         if new_stream_ids:
             new_entities = [DispatcharrStreamMediaPlayer(self._coordinator, stream_id) for stream_id in new_stream_ids]
             self._async_add_entities(new_entities)
-            self._known_stream_ids.update(new_stream_ids)
+            self._known_stream_ids |= new_stream_ids
+
+        stopped_stream_ids = self._known_stream_ids - current_stream_ids
+        if stopped_stream_ids:
+            self._remove_entities(stopped_stream_ids)
+            self._known_stream_ids -= stopped_stream_ids
+
+    @callback
+    def _remove_entities(self, stream_ids: set) -> None:
+        """Delete the registry entries for streams that are no longer running.
+
+        Without this the entities linger forever as "unavailable"; removing the
+        registry entry is what actually takes them out of the UI.
+        """
+        registry = er.async_get(self._coordinator.hass)
+        entry_id = self._coordinator.config_entry.entry_id
+
+        for stream_id in stream_ids:
+            entity_id = registry.async_get_entity_id(
+                "media_player", DOMAIN, f"{entry_id}_{stream_id}"
+            )
+            if entity_id:
+                _LOGGER.debug("Stream %s stopped, removing %s", stream_id, entity_id)
+                registry.async_remove(entity_id)
 
 
 class DispatcharrStreamMediaPlayer(CoordinatorEntity, MediaPlayerEntity):

@@ -88,7 +88,7 @@ Because Dispatcharr's websocket only accepts JWT access tokens (30-minute lifeti
 * **`sensor.dispatcharr_active_clients`**: Total number of viewers across all active streams. Attributes: `clients` (each with `ip_address`, `user_agent`, `connected_at`, `output_format` and the `channel_name` they're watching), `clients_per_channel`, and `clients_listed`.
 * **`sensor.dispatcharr_unread_notifications`**: Count of active (non-dismissed) Dispatcharr system notifications, with the notifications themselves (title, message, priority, type) as an attribute list.
 * **`sensor.dispatcharr_<account_name>_status`** (Dynamic, one per M3U/Xtream account): State is the account's status (`idle`, `fetching`, `parsing`, `error`, `success`, `pending_setup`, `disabled`). Attributes include `last_message`, `max_streams`, `earliest_expiration`, `all_expirations`, and `exp_date`.
-* **`media_player.dispatcharr_<channel_name>`** (Dynamic): A new media player entity for each active stream, removed automatically when the stream stops.
+* **`media_player.dispatcharr_<channel_name>`** (Dynamic): A new media player entity for each active stream, removed again once the stream stops. Because these entities only exist while someone is watching, don't reference them directly in automations — use the `Active Clients` or `Total Active Streams` sensors, which are always present.
     * State is `playing` while active.
     * Supports the `media_player.media_stop` service to stop the channel's stream (for **all** viewers — this isn't a per-client action, see Troubleshooting).
 
