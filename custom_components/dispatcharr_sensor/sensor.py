@@ -48,10 +48,9 @@ class DispatcharrTotalStreamSensor(CoordinatorEntity, SensorEntity):
         self._attr_icon = "mdi:play-network"
         self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, coordinator.config_entry.entry_id)}, name="Dispatcharr")
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        self._attr_native_value = len(self.coordinator.data or {})
-        self.async_write_ha_state()
+    @property
+    def native_value(self) -> int:
+        return len(self.coordinator.data or {})
 
 
 class DispatcharrUnreadNotificationsSensor(CoordinatorEntity, SensorEntity):
@@ -66,11 +65,14 @@ class DispatcharrUnreadNotificationsSensor(CoordinatorEntity, SensorEntity):
         self._attr_icon = "mdi:bell-alert"
         self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, coordinator.config_entry.entry_id)}, name="Dispatcharr")
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        data = self.coordinator.data or {}
-        self._attr_native_value = data.get("unread_notifications", 0)
-        self._attr_extra_state_attributes = {
+    @property
+    def native_value(self) -> int:
+        return (self.coordinator.data or {}).get("unread_notifications", 0)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        notifications = (self.coordinator.data or {}).get("notifications", [])
+        return {
             "notifications": [
                 {
                     "title": n.get("title"),
@@ -79,11 +81,10 @@ class DispatcharrUnreadNotificationsSensor(CoordinatorEntity, SensorEntity):
                     "notification_type": n.get("notification_type"),
                     "created_at": n.get("created_at"),
                 }
-                for n in data.get("notifications", [])
+                for n in notifications
                 if not n.get("is_dismissed")
             ]
         }
-        self.async_write_ha_state()
 
 
 class DispatcharrM3UAccountManager:
@@ -118,27 +119,29 @@ class DispatcharrM3UAccountSensor(CoordinatorEntity, SensorEntity):
         super().__init__(coordinator)
         self._account_id = account_id
 
-        account = (coordinator.data or {}).get("m3u_accounts", {}).get(account_id) or {}
-        name = account.get("name") or f"M3U Account {account_id}"
-
+        name = self._account_data.get("name") or f"M3U Account {account_id}"
         self._attr_name = f"{name} Status"
         self._attr_unique_id = f"{coordinator.config_entry.entry_id}_m3u_{account_id}"
         self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, coordinator.config_entry.entry_id)}, name="Dispatcharr")
 
     @property
-    def available(self) -> bool:
+    def _account_data(self) -> dict:
+        """The account's current data, or an empty dict if it's gone."""
         accounts = (self.coordinator.data or {}).get("m3u_accounts", {})
-        return super().available and self._account_id in accounts
+        return accounts.get(self._account_id) or {}
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        if not self.available:
-            self.async_write_ha_state()
-            return
+    @property
+    def available(self) -> bool:
+        return super().available and bool(self._account_data)
 
-        account = self.coordinator.data["m3u_accounts"][self._account_id]
-        self._attr_native_value = account.get("status")
-        self._attr_extra_state_attributes = {
+    @property
+    def native_value(self) -> str | None:
+        return self._account_data.get("status")
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        account = self._account_data
+        return {
             "name": account.get("name"),
             "is_active": account.get("is_active"),
             "last_message": account.get("last_message"),
@@ -147,4 +150,3 @@ class DispatcharrM3UAccountSensor(CoordinatorEntity, SensorEntity):
             "all_expirations": account.get("all_expirations"),
             "exp_date": account.get("exp_date"),
         }
-        self.async_write_ha_state()
