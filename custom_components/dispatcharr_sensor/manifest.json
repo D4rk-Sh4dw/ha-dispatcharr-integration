@@ -1,0 +1,14 @@
+{
+  "domain": "dispatcharr_sensor",
+  "name": "Dispatcharr",
+  "version": "1.0.0",
+  "documentation": "https://github.com/D4rk-Sh4dw/ha-dispatcharr-integration",
+  "requirements": [],
+  "dependencies": [],
+  "codeowners": ["@D4rk-Sh4dw"],
+  "iot_class": "local_polling",
+  "config_flow": true
+
+}
+
+

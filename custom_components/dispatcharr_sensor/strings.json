@@ -1,0 +1,46 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Dispatcharr",
+        "description": "Enter your Dispatcharr URL and account credentials. They're used to mint a permanent API key for regular requests, and are also stored so the optional websocket link can silently re-authenticate (Dispatcharr's websocket only accepts short-lived JWTs, not the API key).",
+        "data": {
+          "url": "URL",
+          "username": "Username",
+          "password": "Password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reauthenticate Dispatcharr",
+        "description": "The stored API key was rejected by Dispatcharr. Enter your username and password again to mint a new one.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to Dispatcharr with these details. Check the URL and credentials."
+    },
+    "abort": {
+      "reauth_successful": "Reauthentication was successful."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Dispatcharr Options",
+        "data": {
+          "enable_epg": "Enable EPG data",
+          "enable_realtime": "Enable realtime websocket updates",
+          "update_interval": "Update interval (seconds)"
+        },
+        "data_description": {
+          "enable_epg": "Look up the currently airing program for each active stream. Disable for better performance on slower servers.",
+          "enable_realtime": "Keep a websocket connection open so stream/recording/notification changes push an update immediately instead of waiting for the next poll. Note: live stream-status events are only sent to Dispatcharr admin accounts.",
+          "update_interval": "How often to poll Dispatcharr for active streams, from 2 to 300 seconds. Lower is closer to real-time but puts more load on your server. Realtime updates (above) still arrive immediately regardless of this value."
+        }
+      }
+    }
+  }
+}
