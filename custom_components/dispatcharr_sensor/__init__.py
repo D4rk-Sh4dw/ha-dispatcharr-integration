@@ -191,11 +191,22 @@ class DispatcharrDataUpdateCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(f"API request to {url} failed: {err}") from err
 
     async def _api_request_paginated(self, url: str) -> list:
-        """GET every page of a DRF-paginated list endpoint and return the combined results."""
+        """GET a list endpoint and return all of its items.
+
+        Dispatcharr is inconsistent about pagination: some list endpoints return
+        a bare JSON array, others a DRF {count, next, previous, results} page
+        object. Handle both rather than trusting the OpenAPI schema, which
+        describes several endpoints as paginated that in practice are not.
+        """
         results = []
         base_parts = urlsplit(self.base_url)
         while url:
             page = await self._api_request("GET", url)
+
+            if isinstance(page, list):
+                results.extend(page)
+                break
+
             results.extend(page.get("results", []))
             next_url = page.get("next")
             if next_url:
@@ -295,6 +306,11 @@ class DispatcharrDataUpdateCoordinator(DataUpdateCoordinator):
             except UpdateFailed as err:
                 _LOGGER.debug("Could not fetch current programs: %s", err)
                 programs = []
+
+            # Same defensive handling as the GET list endpoints: this may come
+            # back as a bare array or wrapped in a DRF page object.
+            if isinstance(programs, dict):
+                programs = programs.get("results", [])
 
             programs_by_tvg_id = {
                 program["tvg_id"]: program
@@ -412,8 +428,8 @@ class DispatcharrDataUpdateCoordinator(DataUpdateCoordinator):
 class DispatcharrAuxDataCoordinator(DataUpdateCoordinator):
     """Slow-polled coordinator for M3U account status and notifications.
 
-    Reuses the main coordinator's authenticated `_api_request` instead of
-    duplicating the API-key request logic.
+    Reuses the main coordinator's authenticated request helpers instead of
+    duplicating the API-key logic.
     """
 
     def __init__(
@@ -432,13 +448,13 @@ class DispatcharrAuxDataCoordinator(DataUpdateCoordinator):
         )
 
     async def _async_update_data(self):
-        accounts = await self._main._api_request(
-            "GET", f"{self._main.base_url}/api/m3u/accounts/"
+        accounts = await self._main._api_request_paginated(
+            f"{self._main.base_url}/api/m3u/accounts/"
         )
 
         try:
-            notifications = await self._main._api_request(
-                "GET", f"{self._main.base_url}/api/core/notifications/"
+            notifications = await self._main._api_request_paginated(
+                f"{self._main.base_url}/api/core/notifications/"
             )
         except UpdateFailed as err:
             _LOGGER.debug("Could not fetch notifications: %s", err)
