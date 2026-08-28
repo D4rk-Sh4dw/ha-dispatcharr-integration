@@ -190,6 +190,40 @@ class DispatcharrDataUpdateCoordinator(DataUpdateCoordinator):
         except aiohttp.ClientError as err:
             raise UpdateFailed(f"API request to {url} failed: {err}") from err
 
+    def _rebase_url(self, url: str | None) -> str | None:
+        """Rebuild a Dispatcharr-hosted URL against the configured base URL.
+
+        Dispatcharr builds absolute URLs from its own host/port settings, which
+        are wrong whenever it sits behind a reverse proxy on a different host or
+        port. Keep only the path and query, and re-attach the base URL the user
+        actually configured. Only ever apply this to Dispatcharr's own URLs.
+        """
+        if not url:
+            return None
+
+        parts = urlsplit(url)
+        if not parts.path:
+            return None
+
+        base = urlsplit(self.base_url)
+        path = parts.path if parts.path.startswith("/") else f"/{parts.path}"
+        return urlunsplit((base.scheme, base.netloc, path, parts.query, ""))
+
+    def _logo_url(self, logo: dict) -> str | None:
+        """Pick a reachable logo URL for a logo record."""
+        if cache_url := logo.get("cache_url"):
+            # The cache endpoint is always served by Dispatcharr itself, so it
+            # has to match the base URL rather than whatever host it reports.
+            return self._rebase_url(cache_url)
+
+        url = logo.get("url")
+        if url and url.startswith("/"):
+            # A relative path is Dispatcharr-hosted as well.
+            return self._rebase_url(url)
+
+        # Anything else points at the upstream provider; leave it untouched.
+        return url
+
     async def _api_request_paginated(self, url: str) -> list:
         """GET a list endpoint and return all of its items.
 
@@ -199,7 +233,6 @@ class DispatcharrDataUpdateCoordinator(DataUpdateCoordinator):
         describes several endpoints as paginated that in practice are not.
         """
         results = []
-        base_parts = urlsplit(self.base_url)
         while url:
             page = await self._api_request("GET", url)
 
@@ -208,15 +241,7 @@ class DispatcharrDataUpdateCoordinator(DataUpdateCoordinator):
                 break
 
             results.extend(page.get("results", []))
-            next_url = page.get("next")
-            if next_url:
-                next_parts = urlsplit(next_url)
-                # Rebuild against our configured base_url instead of trusting the
-                # scheme/host DRF reported, in case a reverse proxy rewrites it.
-                next_url = urlunsplit(
-                    (base_parts.scheme, base_parts.netloc, next_parts.path, next_parts.query, "")
-                )
-            url = next_url
+            url = self._rebase_url(page.get("next"))
         return results
 
     async def async_populate_channel_map(self):
@@ -237,7 +262,7 @@ class DispatcharrDataUpdateCoordinator(DataUpdateCoordinator):
             raise ConfigEntryNotReady(f"Could not fetch channel list: {err}") from err
 
         self.logo_map = {
-            str(logo["id"]): logo.get("cache_url") or logo.get("url")
+            str(logo["id"]): self._logo_url(logo)
             for logo in logos or []
             if logo.get("id") is not None
         }
